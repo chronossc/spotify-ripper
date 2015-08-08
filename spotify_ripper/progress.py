@@ -57,7 +57,7 @@ class Progress(object):
         self.total_size = 0
 
         # some duplicate work here, maybe cache this info beforehand?
-        for idx, track in enumerate(tracks):
+        for idx, (track, __) in enumerate(tracks):
             try:
                 track.load()
                 if track.availability != 1:

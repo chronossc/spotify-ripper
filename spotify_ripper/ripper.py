@@ -207,7 +207,7 @@ class Ripper(threading.Thread):
                     format_size(self.progress.total_size))
 
             # ripping loop
-            for idx, track in enumerate(tracks):
+            for idx, (track, playlist) in enumerate(tracks):
                 try:
                     print('Loading track...')
                     track.load()
@@ -240,6 +240,9 @@ class Ripper(threading.Thread):
                     # update id3v2 with metadata and embed front cover image
                     set_metadata_tags(args, self.audio_file, track)
 
+                    # append file to playlist
+                    self.append_to_playlist(self.audio_file, playlist)
+
                     # make a note of the index and remove all the
                     # tracks from the playlist when everything is done
                     self.queue_remove_from_playlist(idx)
@@ -263,6 +266,14 @@ class Ripper(threading.Thread):
         self.finished = True
 
     def load_link(self, uri):
+        """
+        Get the tracks from track, playlist or album and returns
+        tracks and playlist info (if possible).
+        """
+
+        def add_playlist_info(track):
+            return (track, playlist_info)
+
         # ignore if the uri is just blank (e.g. from a file)
         if not uri:
             return iter([])
@@ -270,12 +281,16 @@ class Ripper(threading.Thread):
         link = self.session.get_link(uri)
         if link.type == spotify.LinkType.TRACK:
             track = link.as_track()
-            return iter([track])
+            return iter([(track, {})])
         elif link.type == spotify.LinkType.PLAYLIST:
             self.current_playlist = link.as_playlist()
             print('Loading playlist...')
             self.current_playlist.load()
-            return iter(self.current_playlist.tracks)
+            playlist_info = {'name': self.current_playlist.name}
+            return map(
+                add_playlist_info,
+                self.current_playlist.tracks
+            )
         elif link.type == spotify.LinkType.STARRED:
             link_user = link.as_user()
             if link_user is not None:
@@ -286,7 +301,8 @@ class Ripper(threading.Thread):
             if starred is not None:
                 print('Loading starred playlist...')
                 starred.load()
-                return iter(starred.tracks)
+                playlist_info = {'name': starred.name}
+                return map(add_playlist_info, starred.tracks)
             else:
                 print(
                     Fore.RED + "Could not load starred playlist..." +
@@ -298,13 +314,15 @@ class Ripper(threading.Thread):
             print('Loading album browser...')
             album_browser.load()
             self.current_album = album
-            return iter(album_browser.tracks)
+            playlist_info = {}
+            return map(add_playlist_info, album_browser.tracks)
         elif link.type == spotify.LinkType.ARTIST:
             artist = link.as_artist()
             artist_browser = artist.browse()
             print('Loading artist browser...')
             artist_browser.load()
-            return iter(artist_browser.tracks)
+            playlist_info = {}
+            return map(add_playlist_info, artist_browser.tracks)
         return iter([])
 
     # excludes 'appears on' albums
@@ -496,6 +514,30 @@ class Ripper(threading.Thread):
             return None
 
         return [artist['name'] for artist in album['artists']]
+
+    def append_to_playlist(self, audio_file, playlist):
+        if not playlist:
+            return
+        playlist_file = self.format_playlist_path(playlist)
+        _base_dir = base_dir(self.args)
+
+        with open(playlist_file, 'a') as playlist:
+            playlist.write(
+                audio_file.replace(_base_dir + os.path.sep, '') + "\n"
+            )
+
+        print(Fore.YELLOW + "Adding to " + playlist_file + Fore.RESET)
+        print("-" * 79)
+
+    def format_playlist_path(self, info):
+        if not info:
+            return
+        args = self.args
+        _base_dir = base_dir(args)
+        playlist_name = to_ascii(
+            args, os.path.join(_base_dir, info['name'] + '.m3u')
+        )
+        return playlist_name
 
     def format_track_path(self, idx, track):
         args = self.args
